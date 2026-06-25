@@ -15,6 +15,7 @@ import io.kestra.core.exceptions.FlowProcessingException;
 import io.kestra.core.exceptions.IllegalVariableEvaluationException;
 import io.kestra.core.exceptions.InternalException;
 import io.kestra.core.models.HasSource;
+import io.kestra.core.models.Label;
 import io.kestra.core.models.QueryFilter;
 import io.kestra.core.models.QueryFilter.Resource;
 import io.kestra.core.models.SearchResult;
@@ -242,6 +243,53 @@ public class FlowController {
                 filters
             )
         );
+    }
+
+    @ExecuteOn(TaskExecutors.IO)
+    @Get(uri = "/folders")
+    @Operation(tags = { "Flows" }, summary = "List flow folders")
+    public List<FlowFolder> listFlowFolders(
+        @Parameter(description = "The flow label key used to store the folder path") @QueryValue(defaultValue = "folder") String labelKey,
+        @Parameter(description = "Filters. PHP-style nested query is used - examples: `filters[labels][NOT_EQUALS][foo]=bar`, `filters[namespace][CONTAINS]=test`", in = ParameterIn.QUERY)
+        @QueryFilterFormat(Resource.FLOW) List<QueryFilter> filters
+    ) {
+        if (!labelKey.matches("^[\\p{Ll}][\\p{L}0-9._-]*$")) {
+            throw new HttpStatusException(HttpStatus.BAD_REQUEST, "Invalid folder label key");
+        }
+
+        Map<String, Long> counts = new HashMap<>();
+        Set<String> paths = new HashSet<>();
+
+        flowRepository.find(Pageable.UNPAGED, tenantService.resolveTenant(), filters)
+            .forEach(flow -> normalizeFolderPath(Label.toMap(flow.getLabels()).get(labelKey))
+                .ifPresent(path ->
+                {
+                    paths.add(path);
+                    counts.merge(path, 1L, Long::sum);
+
+                    int childSeparator = path.indexOf("/");
+                    if (childSeparator > 0) {
+                        paths.add(path.substring(0, childSeparator));
+                    }
+                }));
+
+        return paths.stream()
+            .sorted(String.CASE_INSENSITIVE_ORDER.thenComparing(Comparator.naturalOrder()))
+            .map(path ->
+            {
+                int separator = path.indexOf("/");
+                String parent = separator > 0 ? path.substring(0, separator) : null;
+                String name = separator > 0 ? path.substring(separator + 1) : path;
+
+                return new FlowFolder(
+                    path,
+                    name,
+                    parent,
+                    separator > 0 ? 2 : 1,
+                    counts.getOrDefault(path, 0L)
+                );
+            })
+            .toList();
     }
 
     @ExecuteOn(TaskExecutors.IO)
@@ -942,5 +990,31 @@ public class FlowController {
         String flowId,
         Integer revision,
         List<FlowService.TaskDeprecation> deprecatedTasks) {
+    }
+
+    public record FlowFolder(
+        String path,
+        String name,
+        @Nullable String parent,
+        int depth,
+        long count
+    ) {
+    }
+
+    private static Optional<String> normalizeFolderPath(@Nullable String folder) {
+        if (folder == null || folder.isBlank()) {
+            return Optional.empty();
+        }
+
+        List<String> parts = Arrays.stream(folder.split("/"))
+            .map(String::trim)
+            .filter(part -> !part.isEmpty())
+            .toList();
+
+        if (parts.size() > 2) {
+            return Optional.empty();
+        }
+
+        return parts.isEmpty() ? Optional.empty() : Optional.of(String.join("/", parts));
     }
 }
