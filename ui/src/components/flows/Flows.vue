@@ -40,14 +40,6 @@
             :rowKey="(row: any) => `${row.namespace}-${row.id}`"
         >
             <template #top>
-                <FlowFoldersPanel
-                    :folders="folders"
-                    :activeFolder="activeFolder"
-                    :dragging="draggingFlow !== null"
-                    :canUpdate="canUpdate"
-                    @select="selectFolder"
-                    @move="moveDraggedFlowToFolder"
-                />
                 <KSFilter
                     :configuration="flowFilter"
                     :properties="{
@@ -87,13 +79,6 @@
                 >
                     {{ $t("disable") }}
                 </KsButton>
-                <KsButton
-                    v-if="canUpdate"
-                    @click="openMoveFolderModal()"
-                    :icon="FolderOpenOutline"
-                >
-                    Move to folder
-                </KsButton>
             </template>
 
             <KsTableColumn
@@ -103,12 +88,7 @@
                 :label="$t('id')"
             >
                 <template #default="scope">
-                    <div
-                        class="flow-id"
-                        :draggable="canUpdate"
-                        @dragstart="onFlowDragStart($event, scope.row)"
-                        @dragend="onFlowDragEnd"
-                    >
+                    <div class="flow-id">
                         <router-link
                             :to="{
                                 name: 'flows/update',
@@ -247,13 +227,6 @@
                         >
                             <Play />
                         </KsIconButton>
-                        <KsIconButton
-                            v-if="canUpdate"
-                            tooltip="Move to folder"
-                            @click.stop="openMoveFolderModal(scope.row)"
-                        >
-                            <FolderOpenOutline />
-                        </KsIconButton>
                     </div>
                 </template>
             </KsTableColumn>
@@ -278,40 +251,6 @@
                 <FlowRunActions :flowRun="flowRunRef" />
             </template>
         </KsDialog>
-
-        <KsDialog
-            v-model="showMoveFolderModal"
-            destroyOnClose
-            appendToBody
-        >
-            <template #header>
-                <span>Move to folder</span>
-            </template>
-
-            <KsFormItem label="Folder path">
-                <KsInput
-                    v-model="moveFolderPath"
-                    placeholder="Client/Subfolder"
-                    :disabled="movingFolder"
-                />
-            </KsFormItem>
-            <p v-if="moveFolderError" class="flow-folder-error">
-                {{ moveFolderError }}
-            </p>
-
-            <template #footer>
-                <KsButton :disabled="movingFolder" @click="showMoveFolderModal = false">
-                    {{ $t("cancel") }}
-                </KsButton>
-                <KsButton
-                    type="primary"
-                    :disabled="movingFolder || !!moveFolderError"
-                    @click="confirmMoveFolder"
-                >
-                    Move
-                </KsButton>
-            </template>
-        </KsDialog>
     </section>
 </template>
 
@@ -332,7 +271,6 @@
     import Download from "vue-material-design-icons/Download.vue"
     import TrashCan from "vue-material-design-icons/TrashCan.vue"
     import TextBoxSearch from "vue-material-design-icons/TextBoxSearch.vue"
-    import FolderOpenOutline from "vue-material-design-icons/FolderOpenOutline.vue"
 
     import NavBarActions from "../layout/NavBarActions.vue"
     import NavBarAction from "../layout/NavBarAction.vue"
@@ -340,10 +278,9 @@
     import FileDocumentRemoveOutline from "vue-material-design-icons/FileDocumentRemoveOutline.vue"
     import Play from "vue-material-design-icons/Play.vue"
 
-    import {KsButton, KsExecutionStatus, KsFormItem, KsIconButton, KsInput} from "@kestra-io/design-system"
+    import {KsExecutionStatus, KsIconButton} from "@kestra-io/design-system"
     import Labels from "../layout/Labels.vue"
     import TriggerAvatar from "./TriggerAvatar.vue"
-    import FlowFoldersPanel from "./FlowFoldersPanel.vue"
 
     import FlowRun from "./FlowRun.vue"
     import FlowRunActions from "./FlowRunActions.vue"
@@ -365,13 +302,6 @@
 
     import {useTableColumns} from "../../composables/useTableColumns"
     import useRouteContext from "../../composables/useRouteContext"
-    import {
-        FLOW_FOLDER_LABEL_KEY,
-        FlowFolder,
-        flowFolderValidationError,
-        getFlowFolderPath,
-        normalizeFlowFolderPath,
-    } from "../../utils/flowFolders"
 
     const props = withDefaults(defineProps<{
         topbar?: boolean;
@@ -402,12 +332,6 @@
     const lastExecutionByFlowReady = ref(false)
     const latestExecutions = ref<any[]>([])
     const file = ref<HTMLInputElement | null>(null)
-    const folders = ref<FlowFolder[]>([])
-    const draggingFlow = ref<{id: string; namespace: string} | null>(null)
-    const showMoveFolderModal = ref(false)
-    const moveFolderPath = ref("")
-    const movingFolder = ref(false)
-    const flowsToMove = ref<{id: string; namespace: string}[]>([])
 
     const optionalColumns = ref([
         {
@@ -473,21 +397,9 @@
     const dataTable = useTemplateRef("dataTable")
 
     const ready = ref(false)
-    const folderFilterQueryKey = `filters[labels][EQUALS][${FLOW_FOLDER_LABEL_KEY}]`
-    const activeFolder = computed(() => {
-        const value = route.query[folderFilterQueryKey]
-
-        if (Array.isArray(value)) {
-            return typeof value[0] === "string" ? value[0] : undefined
-        }
-
-        return typeof value === "string" ? value : undefined
-    })
-    const moveFolderError = computed(() => flowFolderValidationError(moveFolderPath.value))
 
     async function loadData({page, size, sort}: {page: number; size: number; sort?: string}) {
         if (!loadInit.value) return
-        loadFolders()
         await flowStore
             .findFlows(
                 loadQuery({
@@ -620,68 +532,6 @@
         toast.success(t("execution_started"))
     }
 
-    function onFlowDragStart(event: DragEvent, flow: any) {
-        if (!canUpdate.value) {
-            event.preventDefault()
-            return
-        }
-
-        draggingFlow.value = {id: flow.id, namespace: flow.namespace}
-        event.dataTransfer?.setData("application/x-kestra-flow", JSON.stringify(draggingFlow.value))
-        if (event.dataTransfer) {
-            event.dataTransfer.effectAllowed = "move"
-        }
-    }
-
-    function onFlowDragEnd() {
-        draggingFlow.value = null
-    }
-
-    async function moveDraggedFlowToFolder(folderPath?: string) {
-        if (!draggingFlow.value) {
-            return
-        }
-
-        await moveFlowsToFolder([draggingFlow.value], folderPath)
-    }
-
-    function openMoveFolderModal(flow?: any) {
-        flowsToMove.value = flow ? [{id: flow.id, namespace: flow.namespace}] : selectionIds.value
-        moveFolderPath.value = flow ? getFlowFolderPath(flow.labels) ?? "" : activeFolder.value ?? ""
-        showMoveFolderModal.value = flowsToMove.value.length > 0
-    }
-
-    async function confirmMoveFolder() {
-        if (moveFolderError.value) {
-            return
-        }
-
-        await moveFlowsToFolder(flowsToMove.value, moveFolderPath.value)
-        showMoveFolderModal.value = false
-    }
-
-    async function moveFlowsToFolder(flows: {id: string; namespace: string}[], folderPath?: string | null) {
-        if (!flows.length) {
-            return
-        }
-
-        movingFolder.value = true
-        try {
-            const normalizedFolderPath = normalizeFlowFolderPath(folderPath)
-            await Promise.all(flows.map(flow => flowStore.moveFlowToFolder({
-                ...flow,
-                folderPath: normalizedFolderPath,
-            })))
-
-            toast.success(`Moved ${flows.length} flow${flows.length > 1 ? "s" : ""}`)
-            dataTable.value?.reload()
-            loadFolders()
-        } finally {
-            movingFolder.value = false
-            draggingFlow.value = null
-        }
-    }
-
     function exportFlows() {
         toast.confirm(
             t("flow export", {flowCount: queryBulkAction.value ? flowStore.total : selection.value.length}),
@@ -804,34 +654,6 @@
         return _merge(base, queryFilter)
     }
 
-    function loadFolderQuery() {
-        const {page: _p, size: _s, sort: _so, ...queryFilter} = route.query as Record<string, any>
-        delete queryFilter[folderFilterQueryKey]
-
-        return queryFilter
-    }
-
-    function loadFolders() {
-        flowStore.loadFlowFolders(loadFolderQuery()).then(data => {
-            folders.value = data
-        })
-    }
-
-    function selectFolder(path?: string) {
-        const query: Record<string, any> = {
-            ...route.query,
-            page: "1",
-        }
-
-        if (path) {
-            query[folderFilterQueryKey] = path
-        } else {
-            delete query[folderFilterQueryKey]
-        }
-
-        router.push({query})
-    }
-
     function refresh() {
         dataTable.value?.reload()
     }
@@ -905,10 +727,5 @@
     justify-content: center;
     gap: 0.25rem;
     padding-right: var(--ks-spacing-4);
-}
-
-.flow-folder-error {
-    color: var(--ks-text-error);
-    margin: var(--ks-spacing-2) 0 0;
 }
 </style>

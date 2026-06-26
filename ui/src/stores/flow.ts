@@ -18,7 +18,6 @@ import {useRoute} from "vue-router"
 import {useClient} from "@kestra-io/kestra-sdk"
 import {defaultNamespace} from "../composables/useNamespaces"
 import {TUTORIAL_NAMESPACE} from "../utils/constants"
-import {FLOW_FOLDER_LABEL_KEY, FlowFolder, setFlowFolderInSource} from "../utils/flowFolders"
 
 const textYamlHeader = {
     headers: {
@@ -394,37 +393,6 @@ export const useFlowStore = defineStore("flow", () => {
             }
         })
     }
-
-    function loadFlowFolders(options: { [key: string]: any } = {}) {
-        return axios.get<FlowFolder[]>(`${apiUrl()}/flows/folders`, {
-            params: {
-                labelKey: FLOW_FOLDER_LABEL_KEY,
-                ...options,
-            },
-        }).then(response => response.data)
-    }
-
-    async function moveFlowToFolder(options: {namespace: string; id: string; folderPath?: string | null}) {
-        const current = await axios.get<Flow & {source: string}>(`${apiUrl()}/flows/${options.namespace}/${options.id}`, {
-            params: {
-                source: true,
-            },
-        })
-
-        const source = setFlowFolderInSource(current.data.source, options.folderPath)
-
-        return axios.put<Flow>(`${apiUrl()}/flows/${options.namespace}/${options.id}`, source, {
-            ...textYamlHeader,
-            ...VALIDATE,
-        }).then(response => {
-            if (response.status >= 300) {
-                return Promise.reject(response)
-            }
-
-            return response.data
-        })
-    }
-
     function searchFlows(options: { [key: string]: any }) {
         const sortString = options.sort ? `?sort=${options.sort}` : ""
         delete options.sort
@@ -1032,8 +1000,6 @@ function deleteFlowAndDependencies() {
         onEdit,
         initYamlSource,
         findFlows,
-        loadFlowFolders,
-        moveFlowToFolder,
         searchFlows,
         flowsByNamespace,
         loadFlow,
