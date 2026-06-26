@@ -6,7 +6,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY --chown=kestra:kestra docker /
 
 RUN --mount=type=bind,target=/mnt/context \
-    chmod +x /usr/local/bin/docker-entrypoint.sh /app/kestra 2>/dev/null || true && \
     mkdir -p /app/plugins && \
     { cp -r /mnt/context/plugins/. /app/plugins/ 2>/dev/null || true; } && \
     chown -R kestra:kestra /app
